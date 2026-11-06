@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+      - name: Check formatting
+        run: nix fmt -- --check flake.nix package.nix xdg-desktop-portal.nix module.nix hm-module.nix tests/portal.nix
+      - name: Evaluate all systems
+        run: nix flake check --no-build --all-systems
+
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        # Includes the VM test on x86_64, see `checks` in flake.nix.
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - name: Enable KVM
+        if: runner.arch == 'X64'
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: system-features = nixos-test benchmark big-parallel kvm
+      - uses: cachix/cachix-action@v17
+        with:
+          name: credentialsd-flake
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          # Only needed to compile credentialsd, and most of what would be pushed.
+          pushFilter: '-vendor(-staging)?$'
+      - name: Build and test
+        run: nix flake check --print-build-logs

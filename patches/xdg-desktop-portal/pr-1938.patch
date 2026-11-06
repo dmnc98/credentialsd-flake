@@ -1,0 +1,202 @@
+From 6b0e9bad83a90ab31cf754cfe3271cd78a021a06 Mon Sep 17 00:00:00 2001
+From: Sebastian Wick <sebastian.wick@redhat.com>
+Date: Wed, 18 Mar 2026 22:05:10 +0100
+Subject: [PATCH 1/8] tests: Enabled the slow ASAN stack unwinder
+
+The fast one is not working well for us anymore and gives us false
+positives with useless backtraces.
+The unwinder is ~10x more slow, but given that xdp doesn't actually
+execute a lot of code, this seems fine.
+---
+ tests/conftest.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+Index: xdg-desktop-portal-1.22.1/tests/conftest.py
+===================================================================
+--- xdg-desktop-portal-1.22.1.orig/tests/conftest.py
++++ xdg-desktop-portal-1.22.1/tests/conftest.py
+@@ -502,7 +502,7 @@ def xdp_env(
+     asan_suppression = test_dir() / "asan.suppression"
+     if not asan_suppression.exists():
+         raise FileNotFoundError(f"{asan_suppression} does not exist")
+-    env["LSAN_OPTIONS"] = f"suppressions={asan_suppression}"
++    env["LSAN_OPTIONS"] = f"suppressions={asan_suppression},fast_unwind_on_malloc=0"
+ 
+     for key, val in xdp_overwrite_env.items():
+         env[key] = val
+Index: xdg-desktop-portal-1.22.1/tests/meson.build
+===================================================================
+--- xdg-desktop-portal-1.22.1.orig/tests/meson.build
++++ xdg-desktop-portal-1.22.1/tests/meson.build
+@@ -146,7 +146,7 @@ foreach pytest_file : pytest_files
+     ],
+     env: pytest_env,
+     suite: ['integration'],
+-    timeout: 120,
++    timeout: 200,
+   )
+ endforeach
+ 
+Index: xdg-desktop-portal-1.22.1/tests/test_camera.py
+===================================================================
+--- xdg-desktop-portal-1.22.1.orig/tests/test_camera.py
++++ xdg-desktop-portal-1.22.1/tests/test_camera.py
+@@ -79,7 +79,7 @@ class TestCamera:
+ 
+         request = xdp.Request(dbus_con, camera_intf)
+         # technically racy, and valgrind is really slow
+-        request.schedule_close(3000 if xdp.is_valgrind() else 500)
++        request.schedule_close(3000 if xdp.is_valgrind() else 1000)
+         request.call(
+             "AccessCamera",
+             options={},
+Index: xdg-desktop-portal-1.22.1/.github/workflows/build-and-test.yml
+===================================================================
+--- xdg-desktop-portal-1.22.1.orig/.github/workflows/build-and-test.yml
++++ xdg-desktop-portal-1.22.1/.github/workflows/build-and-test.yml
+@@ -101,7 +101,7 @@ jobs:
+             -Dwerror=true
+ 
+       - name: Run xdg-desktop-portal tests
+-        run: XDP_TEST_RUN_LONG=1 timeout --signal=KILL -v ${TESTS_TIMEOUT}m meson test -C _build
++        run: XDP_TEST_RUN_LONG=1 timeout --signal=KILL -v ${TESTS_TIMEOUT}m meson test -C _build --print-errorlogs
+ 
+       - name: Install xdg-desktop-portal
+         run: meson install -C _build
+Index: xdg-desktop-portal-1.22.1/.github/workflows/main.yml
+===================================================================
+--- xdg-desktop-portal-1.22.1.orig/.github/workflows/main.yml
++++ xdg-desktop-portal-1.22.1/.github/workflows/main.yml
+@@ -8,6 +8,9 @@ jobs:
+     uses: ./.github/workflows/container.yml
+     permissions:
+       packages: write
++    with:
++      image: xdg-desktop-portal:2026-06-08.1
++      containerfile: containerfiles/build.containerfile
+ 
+   build-and-test:
+     name: Build and Test
+@@ -29,4 +32,4 @@ jobs:
+       id-token: write
+     with:
+       image: ${{ needs.build-container.outputs.image }}
+-      image_options: ${{ needs.build-container.outputs.image_options }}
+\ No newline at end of file
++      image_options: ${{ needs.build-container.outputs.image_options }}
+Index: xdg-desktop-portal-1.22.1/meson.build
+===================================================================
+--- xdg-desktop-portal-1.22.1.orig/meson.build
++++ xdg-desktop-portal-1.22.1/meson.build
+@@ -126,7 +126,7 @@ gvdb = subproject(
+   ],
+ )
+ 
+-glib_dep = dependency('glib-2.0', version: '>= 2.76')
++glib_dep = dependency('glib-2.0', version: '>= 2.88')
+ gio_dep = dependency('gio-2.0')
+ gio_unix_dep = dependency('gio-unix-2.0')
+ json_glib_dep = dependency('json-glib-1.0')
+@@ -144,6 +144,12 @@ gudev_dep = dependency('gudev-1.0', requ
+ umockdev_dep = dependency('umockdev-1.0', required: get_option('tests'))
+ libglnx_dep = dependency('libglnx')
+ gvdb_dep = dependency('gvdb')
++libdex_dep = dependency('libdex-1', version: '>=1.1')
++
++libdex_codegen_ext = libdex_dep.get_variable('gdbus_codegen_extension', default_value: '')
++if libdex_codegen_ext == ''
++  error('libdex needs to be build with gdbus support enabled')
++endif
+ 
+ gst_inspect = find_program('gst-inspect-1.0', required: false)
+ if gst_inspect.found()
+@@ -211,7 +217,6 @@ base_config.set('libexecdir', libexecdir
+ base_config.set('VERSION', meson.project_version())
+ base_config.set('extraargs', '')
+ 
+-pkgconfig = import('pkgconfig')
+ pkgconfig.generate(
+   name: 'xdg-desktop-portal',
+   description: 'Desktop integration portal',
+Index: xdg-desktop-portal-1.22.1/src/meson.build
+===================================================================
+--- xdg-desktop-portal-1.22.1.orig/src/meson.build
++++ xdg-desktop-portal-1.22.1/src/meson.build
+@@ -1,11 +1,16 @@
+ ###### xdg-desktop-portal
+ 
++gdbus_codegen_extra_args = [
++  f'--extension-path=@libdex_codegen_ext@',
++]
++
+ portal_built_sources = gnome.gdbus_codegen(
+   'xdp-dbus',
+   sources: portal_sources + flatpak_intf_sources,
+   interface_prefix: 'org.freedesktop.portal',
+   namespace: 'XdpDbus',
+   docbook: 'portal',
++  extra_args: gdbus_codegen_extra_args,
+ )
+ host_built_sources = gnome.gdbus_codegen(
+   'xdp-host-dbus',
+@@ -13,6 +18,7 @@ host_built_sources = gnome.gdbus_codegen
+   interface_prefix: 'org.freedesktop.host.portal',
+   namespace: 'XdpDbusHost',
+   docbook: 'portal',
++  extra_args: gdbus_codegen_extra_args,
+ )
+ impl_built_sources = gnome.gdbus_codegen(
+   'xdp-impl-dbus',
+@@ -20,6 +26,7 @@ impl_built_sources = gnome.gdbus_codegen
+   interface_prefix: 'org.freedesktop.impl.portal',
+   namespace: 'XdpDbusImpl',
+   docbook: 'portal',
++  extra_args: gdbus_codegen_extra_args,
+ )
+ background_monitor_built_sources = gnome.gdbus_codegen(
+   'xdp-background-dbus',
+@@ -27,6 +34,7 @@ background_monitor_built_sources = gnome
+   interface_prefix: 'org.freedesktop.background',
+   namespace: 'XdpDbusBackground',
+   docbook: 'portal',
++  extra_args: gdbus_codegen_extra_args,
+ )
+ if have_geoclue
+   geoclue_built_sources = gnome.gdbus_codegen(
+@@ -34,6 +42,7 @@ if have_geoclue
+     sources: 'org.freedesktop.GeoClue2.Client.xml',
+     interface_prefix: 'org.freedesktop.GeoClue2',
+     namespace: 'Geoclue',
++    extra_args: gdbus_codegen_extra_args,
+   )
+ else
+   geoclue_built_sources = []
+@@ -153,6 +162,7 @@ common_deps = [
+   gio_unix_dep,
+   json_glib_dep,
+   libglnx_dep,
++  libdex_dep,
+ ]
+ 
+ if gudev_dep.found()
+Index: xdg-desktop-portal-1.22.1/src/xdp-main.c
+===================================================================
+--- xdg-desktop-portal-1.22.1.orig/src/xdp-main.c
++++ xdg-desktop-portal-1.22.1/src/xdp-main.c
+@@ -29,6 +29,7 @@
+ 
+ #include <glib-unix.h>
+ #include <glib/gi18n.h>
++#include <libdex.h>
+ 
+ #include "xdp-context.h"
+ 
+@@ -162,6 +163,8 @@ main (int argc, char *argv[])
+   bind_textdomain_codeset (GETTEXT_PACKAGE, "UTF-8");
+   textdomain (GETTEXT_PACKAGE);
+ 
++  dex_init ();
++
+   /* Note: if you add any more environment variables here, update
+    * handle_launch() in dynamic-launcher.c to unset them before launching apps
+    */

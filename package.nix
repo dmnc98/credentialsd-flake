@@ -35,18 +35,18 @@ let
 in
 stdenv.mkDerivation (finalAttrs: {
   pname = "credentialsd";
-  version = "0.3.1";
+  version = "0.4.0";
 
   src = fetchFromGitHub {
     owner = "linux-credentials";
     repo = "credentialsd";
     tag = "v${finalAttrs.version}";
-    hash = "sha256-wCkgO/T8UCQLMAY6HyxEL0HlGFlRhqGC+bZc6XhcTwU=";
+    hash = "sha256-7IlHBJtRUObfPB/H8WJaSNcOJidB8JumTO1okIkYlus=";
   };
 
   cargoDeps = rustPlatform.fetchCargoVendor {
     inherit (finalAttrs) pname version src;
-    hash = "sha256-+YEr2bPkJwl0DEWMjKDCjIgq5SX54T2jsbYRbRPGOwQ=";
+    hash = "sha256-hZzFXHUZ5D9geNyBZSvBUoIFhdfhSVzhtTFBayndGu8=";
   };
 
   nativeBuildInputs = [
@@ -83,8 +83,8 @@ stdenv.mkDerivation (finalAttrs: {
     patchShebangs credentialsd-ui/data/resources/icons/copy-icons.py
 
     # Only requests forwarded by xdg-desktop-portal are trusted, identified by
-    # the caller's executable path. Upstream only knows FHS locations; add the
-    # store path of the (wrapped) portal binary.
+    # the caller's systemd unit or else its executable path. Upstream only knows
+    # FHS locations; add the store path of the (wrapped) portal binary.
     substituteInPlace credentialsd/src/gateway/mod.rs \
       --replace-fail 'PathBuf::from("/usr/lib/xdg-desktop-portal"),' \
         'PathBuf::from("${xdg-desktop-portal}/libexec/.xdg-desktop-portal-wrapped"),
@@ -93,7 +93,7 @@ stdenv.mkDerivation (finalAttrs: {
 
     # libwebauthn looks for the public suffix list (used for WebAuthn related
     # origins) under /usr/share, which doesn't exist on NixOS.
-    substituteInPlace $cargoDepsCopy/source-git-0/libwebauthn-*/src/ops/webauthn/psl/dat.rs \
+    substituteInPlace $cargoDepsCopy/source-registry-0/libwebauthn-*/src/ops/webauthn/psl/dat.rs \
       --replace-fail /usr/share/publicsuffix/public_suffix_list.dat \
         ${publicsuffix-list}/share/publicsuffix/public_suffix_list.dat
   '';
