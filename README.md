@@ -66,6 +66,24 @@ systemctl --user stop xyz.iinuwa.credentialsd.Credentials   # D-Bus restarts it 
 Logging out and back in also works. Then restart the browser and try
 <https://webauthn.io>.
 
+### Binary cache
+
+CI pushes its builds to a public [Cachix](https://www.cachix.org) cache, which
+saves building credentialsd yourself:
+
+```nix
+nix.settings = {
+  substituters = [ "https://credentialsd-flake.cachix.org" ];
+  trusted-public-keys = [
+    "credentialsd-flake.cachix.org-1:mIDe/e0WpfdPagHJNnnIl5d011UlyQRi02xCKVPou2M="
+  ];
+};
+```
+
+The cache only has builds for the nixpkgs revision in this flake's `flake.lock`.
+With `inputs.nixpkgs.follows`, packages are built locally unless your nixpkgs is
+on that same revision.
+
 ## How it works
 
 ```

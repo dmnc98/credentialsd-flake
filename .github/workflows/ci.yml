@@ -44,5 +44,11 @@ jobs:
       - uses: cachix/install-nix-action@v31
         with:
           extra_nix_config: system-features = nixos-test benchmark big-parallel kvm
+      - uses: cachix/cachix-action@v17
+        with:
+          name: credentialsd-flake
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          # Only needed to compile credentialsd, and most of what would be pushed.
+          pushFilter: '-vendor(-staging)?$'
       - name: Build and test
         run: nix flake check --print-build-logs
