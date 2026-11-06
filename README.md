@@ -134,6 +134,13 @@ could not be verified" with an empty `claimed_app_id` means that registration
 failed and the portal couldn't derive an ID from the browser's systemd scope
 either.
 
+## Testing
+
+`nix flake check` builds the packages and, on x86_64, boots a NixOS VM that sends
+requests through the portal to credentialsd (`tests/portal.nix`). The VM needs
+KVM. It has no display or authenticator, so it doesn't cover a full passkey
+ceremony. GitHub Actions runs this on every push and pull request.
+
 ## Updating
 
 - **credentialsd:** bump `version` in `package.nix`, then refresh the `src` and
