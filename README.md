@@ -147,10 +147,12 @@ journalctl --user -f -u xdg-desktop-portal \
 match.
 
 A browser registers with the portal under the name of its desktop entry
-(`GIO_LAUNCHED_DESKTOP_FILE`), falling back to `org.mozilla.firefox`. "App ID
-could not be verified" with an empty `claimed_app_id` means that registration
-failed and the portal couldn't derive an ID from the browser's systemd scope
-either.
+(`GIO_LAUNCHED_DESKTOP_FILE`), falling back to `org.mozilla.firefox`. "App ID not
+specified on request" means that registration failed and the portal couldn't
+derive an ID from the browser's systemd unit either. This is expected when a
+browser is started from a terminal in `session-*.scope`. Start it from your
+launcher, or run `GIO_LAUNCHED_DESKTOP_FILE=zen-beta.desktop zen-beta` with no
+other instance running.
 
 ## Testing
 
