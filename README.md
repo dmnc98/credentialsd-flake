@@ -73,23 +73,25 @@ browser add-on -> native messaging helper -> xdg-desktop-portal (Credential port
 ```
 
 - **Patched portal.** credentialsd >= 0.3 only takes requests from
-  xdg-desktop-portal's experimental Credential portal, which isn't upstream
-  yet. `xdg-desktop-portal.nix` builds
-  [linux-credentials' fork](https://github.com/linux-credentials/xdg-desktop-portal)
-  on top of the nixpkgs package. The module runs it in the existing
+  xdg-desktop-portal's experimental Credential portal, which is on upstream's
+  `main` but not in a stable release yet. `xdg-desktop-portal.nix` builds the
+  stable 1.22.1 release with the backport credentialsd ships in its own RPMs
+  (`patches/xdg-desktop-portal/`), plus one later upstream fix. The module runs
+  it in the existing
   `xdg-desktop-portal` user service through a drop-in, with
   `XDG_DESKTOP_PORTAL_ENABLE_EXPERIMENTAL=credential` set. Only the main portal
   binary is replaced; portal backends (GTK, Hyprland, ...), the document portal
   and the permission store are unchanged.
-- **Portal routing.** The fork only exports the interface when `portals.conf`
+- **Portal routing.** The portal only exports the interface when `portals.conf`
   names a backend for it, so the module adds
   `org.freedesktop.impl.portal.experimental.Credential=credentialsd` to
   `/etc/xdg/xdg-desktop-portal/portals.conf`. Other interfaces keep using your
   existing portal configuration.
-- **Trusted caller.** credentialsd only accepts requests from portal binaries
-  at hard-coded FHS paths. `package.nix` adds the patched portal's store path at
-  build time, so `services.credentialsd.package` and
-  `services.credentialsd.portal.package` must match. An assertion checks this.
+- **Trusted caller.** credentialsd accepts requests from processes in
+  `xdg-desktop-portal.service`, or from portal binaries at hard-coded FHS paths.
+  `package.nix` adds the patched portal's store path to that list at build time,
+  so `services.credentialsd.package` and `services.credentialsd.portal.package`
+  must match. An assertion checks this.
 - **Browser add-on.** The add-on built from source is unsigned, so release
   Firefox would only load it temporarily. The package ships upstream's
   Mozilla-signed XPI from the GitHub release as `passthru.firefoxExtension`.
@@ -122,8 +124,15 @@ journalctl --user -f -u xdg-desktop-portal \
   -u xyz.iinuwa.credentialsd.Credentials -u xyz.iinuwa.credentialsd.UiControl
 ```
 
-"Request received from untrusted caller" means credentialsd and the running
-portal don't match.
+"Request received from untrusted caller" means the request didn't come from the
+`xdg-desktop-portal` user service, and credentialsd and the running portal don't
+match.
+
+A browser registers with the portal under the name of its desktop entry
+(`GIO_LAUNCHED_DESKTOP_FILE`), falling back to `org.mozilla.firefox`. "App ID
+could not be verified" with an empty `claimed_app_id` means that registration
+failed and the portal couldn't derive an ID from the browser's systemd scope
+either.
 
 ## Updating
 
@@ -133,8 +142,11 @@ portal don't match.
 - **Helper add-on:** its version is separate from credentialsd (currently
   0.2.0). Update the file name in the `firefoxExtension` URL to match the
   release asset, and refresh its hash.
-- **Portal fork:** update `rev` and `hash` in `xdg-desktop-portal.nix` to the
-  head of the fork's `credentials-portal` branch.
+- **Portal:** the patches only apply to the pinned release. Once a stable release
+  includes the Credential portal, bump `tag` and `hash` in
+  `xdg-desktop-portal.nix` and drop the patches. Until then, compare with the
+  [OBS package](https://build.opensuse.org/package/show/home:MSirringhaus:webauthn_devel/xdg-desktop-portal)
+  that credentialsd's release RPMs are built from.
 
 Upstream is pre-1.0 and its portal integration is experimental, so expect
 updates to need more than hash bumps.
